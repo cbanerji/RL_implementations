@@ -1,39 +1,56 @@
+import os
 import torch
-import torch.nn as nn
-from torch.distributions.categorical import Categorical
+from torch import nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from torch.distributions.normal import Normal
 from torch.optim import Adam
 import numpy as np
 import gym
 from gym.spaces import Discrete, Box
 
-def mlp(sizes, activation=nn.Tanh, output_activation=nn.Identity):
-    # Build a feedforward neural network.
-    layers = []
-    for j in range(len(sizes)-1):
-        act = activation if j < len(sizes)-2 else output_activation
-        layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
-    return nn.Sequential(*layers)
+# Define the policy network, for continuous action space
+class Net(nn.Module):
+    def __init__(self,state_size = 11, action_size = 2, seed=12, hidden_size=32, init_w=3e-3, log_std_min=-20, log_std_max=2):
+        super(Net, self).__init__()
+        self.seed = torch.manual_seed(seed)
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
 
-def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
+        self.fc1 = nn.Linear(state_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+
+        self.mu = nn.Linear(hidden_size, action_size)
+        self.log_std_linear = nn.Linear(hidden_size, action_size)
+
+    def reset_parameters(self):
+        self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
+        self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
+        self.mu.weight.data.uniform_(-init_w, init_w)
+        self.log_std_linear.weight.data.uniform_(-init_w, init_w)
+
+    def forward(self, obs):
+        x = F.relu(self.fc1(obs), inplace=True)
+        x = F.relu(self.fc2(x), inplace=True)
+        mu = self.mu(x)
+
+        log_std = self.log_std_linear(x)
+        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
+        return mu, log_std
+
+
+def train(env_name, hidden_sizes=[32], lr=1e-2,
           epochs=50, batch_size=5000, render=False):
 
     # make environment, check spaces, get obs / act dims
     env = gym.make(env_name)
-    obs_dim = env.observation_space.shape[0]
-    n_acts = env.action_space.shape[0]
-    opt_layer = 2*n_acts # 2 parameters of gaussian
-
-    # make core of policy network
-    net = mlp(sizes=[obs_dim]+hidden_sizes+[opt_layer])
-
+    state_size = env.observation_space.shape[0]
+    action_size = env.action_space.shape[0]
+    net = Net(state_size, action_size)
     # make function to compute action distribution
     def get_policy(obs):
-        opt = net(obs)
-        mu = opt[0:n_acts-1]
-        log_std = opt[n_acts:]
-        std = log_std.exp()
-        return Normal(loc = mu, scale = std)
+        mu, std = net(obs)
+        return Normal(loc=mu, scale=std)
 
     # make action selection function (outputs int actions, sampled from policy)
     def get_action(obs):
@@ -41,8 +58,7 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
-        logp = get_policy(obs).log_prob(act)
-        #logp = get_policy(obs).log_prob(act).sum(axis=-1) #for Normal
+        logp = get_policy(obs).log_prob(act).sum(axis=-1) #for Normal
         return -(logp * weights).mean()
 
     # make optimizer
@@ -104,7 +120,6 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
         # take a single policy gradient update step
         optimizer.zero_grad()
-
         batch_loss = compute_loss(obs=torch.as_tensor(batch_obs, dtype=torch.float32),
                                   #act=torch.as_tensor(batch_acts, dtype=torch.int32),
                                   act=torch.tensor([item.cpu().detach().numpy() for item in batch_acts]),
@@ -121,7 +136,7 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens)))
 
 if __name__ == '__main__':
-    import argparse
+    #import argparse
 
     #parser = argparse.ArgumentParser()
     #parser.add_argument('--env_name', '--env', type=str, default='CartPole-v0')
@@ -131,4 +146,4 @@ if __name__ == '__main__':
 
     #print('\nUsing simplest formulation of policy gradient.\n')
     #train(env_name=args.env_name, render=args.render, lr=args.lr)
-    train("Swimmer-v2")
+    train('Reacher-v2')
