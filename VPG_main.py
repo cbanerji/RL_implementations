@@ -6,7 +6,7 @@ from torch.optim import Adam
 import numpy as np
 import gym
 from gym.spaces import Discrete, Box
-from new import *
+import VPG_basic as n
 
 policy_flag = None
 
@@ -26,4 +26,4 @@ if __name__ == '__main__':
         policy_flag = 1
 
     #train(env_name=args.env_name, render=args.render, lr=args.lr)
-    trn = train("Swimmer-v2")
+    n.agent('Swimmer-v2', policy_flag)
