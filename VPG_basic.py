@@ -7,7 +7,6 @@ from torch.distributions.normal import Normal
 from torch.optim import Adam
 import numpy as np
 import gym
-from gym.spaces import Discrete, Box
 
 # Define the policy network, for continuous action space
 class Net(nn.Module):
@@ -38,62 +37,72 @@ class Net(nn.Module):
         log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
         return mu, log_std
 
+# define the dicrete policy
 
-def train(env_name, hidden_sizes=[32], lr=1e-2,
-          epochs=50, batch_size=5000, render=False):
 
-    # make environment, check spaces, get obs / act dims
-    env = gym.make(env_name)
-    state_size = env.observation_space.shape[0]
-    action_size = env.action_space.shape[0]
-    net = Net(state_size, action_size)
-    # make function to compute action distribution
-    def get_policy(obs):
-        mu, std = net(obs)
+class train:
+    def __init__(self, env_name, hidden_sizes=[32], lr=1e-2, epochs=50, batch_size=5000, render=False):
+
+        self.env_name = env_name
+        self.hidden_sizes = hidden_sizes
+        self.lr= lr
+        self.epochs = epochs
+        self.batch_size = batch_size
+
+        # make environment, check spaces, get obs / act dims
+        self.env = gym.make(self.env_name)
+        self.state_size = self.env.observation_space.shape[0]
+        self.action_size = self.env.action_space.shape[0]
+
+        self.net = Net(self.state_size, self.action_size)
+
+        # make optimizer
+        self.optimizer = Adam(self.net.parameters(), lr= self.lr)
+
+        # make function to compute action distribution
+    def get_policy(self,obs):
+        mu, std = self.net(obs)
         return Normal(loc=mu, scale=std)
 
     # make action selection function (outputs int actions, sampled from policy)
-    def get_action(obs):
+    def get_action(self,obs):
         return get_policy(obs).sample().detach()
 
     # make loss function whose gradient, for the right data, is policy gradient
-    def compute_loss(obs, act, weights):
+    def compute_loss(self,obs, act, weights):
         logp = get_policy(obs).log_prob(act).sum(axis=-1) #for Normal
         return -(logp * weights).mean()
 
-    # make optimizer
-    optimizer = Adam(net.parameters(), lr=lr)
-
-
-    def train_one_epoch():
+    def train_one_epoch(self):
         # make some empty lists for logging.
         batch_obs = []          # for observations
         batch_acts = []         # for actions
         batch_weights = []      # for R(tau) weighting in policy gradient
         batch_rets = []         # for measuring episode returns
         batch_lens = []         # for measuring episode lengths
-
         # reset episode-specific variables
-        obs = env.reset()       # first obs comes from starting distribution
+        obs = self.env.reset()       # first obs comes from starting distribution
         done = False            # signal from environment that episode is over
         ep_rews = []            # list for rewards accrued throughout ep
+
 
         # render first episode of each epoch
         finished_rendering_this_epoch = False
 
         # collect experience by acting in the environment with current policy
         while True:
-
+            '''
             # rendering
             if (not finished_rendering_this_epoch) and render:
                 env.render()
+            '''
 
             # save obs
             batch_obs.append(obs.copy())
 
             # act in the environment
             act = get_action(torch.as_tensor(obs, dtype=torch.float32))
-            obs, rew, done, _ = env.step(act)
+            obs, rew, done, _ = self.env.step(act)
 
             # save action, reward
             batch_acts.append(act)
@@ -109,7 +118,7 @@ def train(env_name, hidden_sizes=[32], lr=1e-2,
                 batch_weights += [ep_ret] * ep_len
 
                 # reset episode-specific variables
-                obs, done, ep_rews = env.reset(), False, []
+                obs, done, ep_rews = self.env.reset(), False, []
 
                 # won't render again this epoch
                 finished_rendering_this_epoch = True
@@ -118,32 +127,16 @@ def train(env_name, hidden_sizes=[32], lr=1e-2,
                 if len(batch_obs) > batch_size:
                     break
 
-        # take a single policy gradient update step
-        optimizer.zero_grad()
-        batch_loss = compute_loss(obs=torch.as_tensor(batch_obs, dtype=torch.float32),
-                                  #act=torch.as_tensor(batch_acts, dtype=torch.int32),
-                                  act=torch.tensor([item.cpu().detach().numpy() for item in batch_acts]),
-                                  weights=torch.as_tensor(batch_weights, dtype=torch.float32))
-        batch_loss.backward()
-        optimizer.step()
-        return batch_loss, batch_rets, batch_lens
+            # take a single policy gradient update step
+            optimizer.zero_grad()
+            batch_loss = compute_loss(obs=torch.as_tensor(batch_obs, dtype=torch.float32),
+            #act=torch.as_tensor(batch_acts, dtype=torch.int32),
+            act=torch.tensor([item.cpu().detach().numpy() for item in batch_acts]),
+            weights=torch.as_tensor(batch_weights, dtype=torch.float32))
+            batch_loss.backward()
+            optimizer.step()
+            return batch_loss, batch_rets, batch_lens
 
-
-    # training loop
-    for i in range(epochs):
-        batch_loss, batch_rets, batch_lens = train_one_epoch()
-        print('epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f'%
-                (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens)))
-
-if __name__ == '__main__':
-    #import argparse
-
-    #parser = argparse.ArgumentParser()
-    #parser.add_argument('--env_name', '--env', type=str, default='CartPole-v0')
-    #parser.add_argument('--render', action='store_true')
-    #parser.add_argument('--lr', type=float, default=1e-2)
-    #args = parser.parse_args()
-
-    #print('\nUsing simplest formulation of policy gradient.\n')
-    #train(env_name=args.env_name, render=args.render, lr=args.lr)
-    train('Reacher-v2')
+for i in range(self.epochs):
+    batch_loss, batch_rets, batch_lens = train_one_epoch()
+    print('epoch: %3d \t loss: %.3f \t return: %.3f \t ep_len: %.3f'% (i, batch_loss, np.mean(batch_rets), np.mean(batch_lens)))
